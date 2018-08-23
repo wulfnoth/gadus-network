@@ -14,6 +14,7 @@ public class EmbedFtpServer {
 
         ListenerFactory factory = new ListenerFactory();
         DataConnectionConfigurationFactory connectionFactory = new DataConnectionConfigurationFactory();
+        connectionFactory.setIdleTime(1800);
         connectionFactory.setActiveEnabled(false);
         
         BaseUser user = new BaseUser();

@@ -1,6 +1,5 @@
 package org.wulfnoth.network.ftp;
 
-import io.netty.util.CharsetUtil;
 import org.apache.commons.net.ftp.FTP;
 import org.apache.commons.net.ftp.FTPClient;
 import org.apache.commons.net.ftp.FTPFile;
@@ -59,82 +58,22 @@ public class ContinuousFtpClient implements Closeable {
      * @return 上传的状态
      * @throws IOException IOException
      */
-    public DownloadStatus download(String remote,String local) throws IOException{
+    public TransformProgress download(String remote,String local) throws IOException{
         //设置被动模式
         ftpClient.enterLocalPassiveMode();
         //设置以二进制方式传输
         ftpClient.setFileType(FTP.BINARY_FILE_TYPE);
         DownloadStatus result;
-
+        DownloadTask progress = new DownloadTask(0);
         //检查远程文件是否存在
         FTPFile[] files = ftpClient.listFiles(remote);
-        if(files.length != 1){
-            return DownloadStatus.Remote_File_NOTExist;
+        if (files.length != 1){
+            progress.setStatus(-2);
+        } else {
+            new Thread(progress.init(new File(local), files[0], ftpClient)).start();
         }
 
-        long lRemoteSize = files[0].getSize();
-        File f = new File(local);
-        //本地存在文件，进行断点下载
-        if(f.exists()){
-            long localSize = f.length();
-            //判断本地文件大小是否大于远程文件大小
-            if(localSize >= lRemoteSize){
-                //System.out.println("本地文件大于远程文件，下载中止");
-                return DownloadStatus.Local_Bigger_Remote;
-            }
-
-            //进行断点续传，并记录状态
-            FileOutputStream out = new FileOutputStream(f,true);
-            ftpClient.setRestartOffset(localSize);
-            InputStream in = ftpClient.retrieveFileStream(remote);
-            byte[] bytes = new byte[1024];
-            long step = lRemoteSize /100;
-            long process=localSize /step;
-            int c;
-            while((c = in.read(bytes))!= -1){
-                out.write(bytes,0,c);
-                localSize+=c;
-                long nowProcess = localSize /step;
-                if(nowProcess > process){
-                    process = nowProcess;
-                }
-            }
-            in.close();
-            out.close();
-            boolean isDo = ftpClient.completePendingCommand();
-            if(isDo){
-                result = DownloadStatus.Download_From_Break_Success;
-            }else {
-                result = DownloadStatus.Download_From_Break_Failed;
-            }
-        }else {
-            OutputStream out = new FileOutputStream(f);
-            InputStream in= ftpClient.retrieveFileStream(new String(remote.getBytes("GBK"),CharsetUtil.ISO_8859_1));
-            byte[] bytes = new byte[1024];
-            long step = lRemoteSize /100;
-            long process=0;
-            long localSize = 0L;
-            int c;
-            while((c = in.read(bytes))!= -1){
-                out.write(bytes, 0, c);
-                localSize+=c;
-                long nowProcess = localSize /step;
-                if(nowProcess > process){
-                    process = nowProcess;
-//                    if(process % 10 == 0)
-                        //System.out.println("下载进度："+process);
-                }
-            }
-            in.close();
-            out.close();
-            boolean upNewStatus = ftpClient.completePendingCommand();
-            if(upNewStatus){
-                result = DownloadStatus.Download_New_Success;
-            }else {
-                result = DownloadStatus.Download_New_Failed;
-            }
-        }
-        return result;
+        return progress;
     }
 
     /**
@@ -234,5 +173,95 @@ public class ContinuousFtpClient implements Closeable {
             e.printStackTrace();
         }
     }
+}
 
+class DownloadTask implements Runnable, TransformProgress{
+
+    private File local;
+    private FTPFile remote;
+    private FTPClient ftpClient;
+
+    private long remoteSize = 1;
+    private long localSize = 0;
+    private long lastLocalSize = 0;
+    private int status;
+
+    DownloadTask init(File local, FTPFile remote, FTPClient ftpclient) {
+        this.local = local;
+        this.remote = remote;
+        this.ftpClient = ftpclient;
+        return this;
+    }
+
+    void setStatus(int status) {
+        this.status = status;
+    }
+
+    DownloadTask(int status) {
+        local = null;
+        remote = null;
+        ftpClient = null;
+        this.status = status;
+    }
+
+    @Override
+    public void run() {
+        try {
+            remoteSize = remote.getSize();
+            byte[] bytes = new byte[4096];
+
+            if(local.exists()){ //本地存在文件，进行断点下载
+                localSize = local.length();
+                if(localSize >= remoteSize){
+                    status = -1;
+                } else {
+                    status = 1; //正在下载
+                    FileOutputStream out = new FileOutputStream(local, true);
+                    ftpClient.setRestartOffset(localSize);
+                    InputStream in = ftpClient.retrieveFileStream(remote.getName());
+
+                    int c;
+                    while ((c = in.read(bytes)) != -1) {
+                        out.write(bytes, 0, c);
+                        localSize += c;
+                    }
+                    in.close();
+                    out.close();
+                    status = 2;
+                }
+            }else {
+                OutputStream out = new FileOutputStream(local);
+                InputStream in= ftpClient.retrieveFileStream(remote.getName());
+                status = 1;
+                long localSize = 0L;
+                int c;
+                while((c = in.read(bytes))!= -1){
+                    out.write(bytes, 0, c);
+                    localSize += c;
+                }
+                in.close();
+                out.close();
+                status = 2;
+            }
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
+    }
+
+    @Override
+    public long getCurrentValue() {
+        long result = localSize - lastLocalSize;
+        lastLocalSize = localSize;
+        return result;
+    }
+
+    @Override
+    public double getProgress() {
+        return 100.0 * ((double)localSize)/remoteSize;
+    }
+
+    @Override
+    public int getStatus() {
+        return status;
+    }
 }
