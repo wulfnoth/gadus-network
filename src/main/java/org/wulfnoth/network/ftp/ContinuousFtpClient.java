@@ -208,7 +208,7 @@ class DownloadTask implements Runnable, TransformProgress{
     public void run() {
         try {
             remoteSize = remote.getSize();
-            byte[] bytes = new byte[4096];
+            byte[] bytes = new byte[2048 * 1024];
 
             if(local.exists()){ //本地存在文件，进行断点下载
                 localSize = local.length();
@@ -216,9 +216,9 @@ class DownloadTask implements Runnable, TransformProgress{
                     status = -1;
                 } else {
                     status = 1; //正在下载
-                    FileOutputStream out = new FileOutputStream(local, true);
+                    BufferedOutputStream out = new BufferedOutputStream(new FileOutputStream(local, true));
                     ftpClient.setRestartOffset(localSize);
-                    InputStream in = ftpClient.retrieveFileStream(remote.getName());
+                    BufferedInputStream in = new BufferedInputStream(ftpClient.retrieveFileStream(remote.getName()));
 
                     int c;
                     while ((c = in.read(bytes)) != -1) {
@@ -233,7 +233,6 @@ class DownloadTask implements Runnable, TransformProgress{
                 OutputStream out = new FileOutputStream(local);
                 InputStream in= ftpClient.retrieveFileStream(remote.getName());
                 status = 1;
-                long localSize = 0L;
                 int c;
                 while((c = in.read(bytes))!= -1){
                     out.write(bytes, 0, c);
